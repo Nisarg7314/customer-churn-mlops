@@ -39,7 +39,6 @@ def evaluate_model(
 
     # Handle Yes/No target labels.
     if y_test.dtype == "object" or str(y_test.dtype) == "str":
-        positive_label = "Yes"
         y_test_binary = (y_test == "Yes").astype(int)
 
         if set(predictions) <= {"Yes", "No"}:
@@ -47,7 +46,6 @@ def evaluate_model(
         else:
             predictions_binary = predictions
     else:
-        positive_label = 1
         y_test_binary = y_test.astype(int)
         predictions_binary = predictions
 

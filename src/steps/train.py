@@ -180,4 +180,3 @@ def train_model(train_df: pd.DataFrame):
     print(f"Training ROC-AUC: {roc_auc:.4f}")
 
     return best_model
-

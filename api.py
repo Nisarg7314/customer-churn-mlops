@@ -28,7 +28,9 @@ Instrumentator().instrument(app).expose(app)
 
 # --------------------------------------------------
 # Input schema
+#
 # --------------------------------------------------
+
 
 class CustomerData(BaseModel):
     gender: str
