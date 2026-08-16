@@ -62,8 +62,8 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build -t ghcr.io/${{ github.repository }}:latest .
+          docker build -t ghcr.io/nisarg7314/customer-churn-mlops:latest .
 
       - name: Push Docker image
         run: |
-          docker push ghcr.io/${{ github.repository }}:latest
+          docker push ghcr.io/nisarg7314/customer-churn-mlops:latest
