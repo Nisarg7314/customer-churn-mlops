@@ -1,11 +1,14 @@
 import os
-import pandas as pd
+import time
+
 import mlflow
+import pandas as pd
 from fastapi import FastAPI
+from prometheus_client import Counter, Histogram
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from prometheus_fastapi_instrumentator import Instrumentator
 
 
 # --------------------------------------------------
@@ -14,11 +17,13 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 app = FastAPI(
     title="Customer Churn Prediction API",
-    description="Customer churn prediction using MLflow and Gradient Boosting",
+    description=(
+        "Customer churn prediction using MLflow "
+        "and Gradient Boosting"
+    ),
     version="1.0.0",
 )
 
-Instrumentator().instrument(app).expose(app)
 
 # --------------------------------------------------
 # Prometheus monitoring
@@ -26,11 +31,25 @@ Instrumentator().instrument(app).expose(app)
 
 Instrumentator().instrument(app).expose(app)
 
+prediction_requests = Counter(
+    "prediction_requests_total",
+    "Total number of prediction requests",
+)
+
+prediction_errors = Counter(
+    "prediction_errors_total",
+    "Total number of prediction errors",
+)
+
+prediction_latency = Histogram(
+    "prediction_request_latency_seconds",
+    "Prediction request latency in seconds",
+)
+
+
 # --------------------------------------------------
 # Input schema
-#
 # --------------------------------------------------
-
 
 class CustomerData(BaseModel):
     gender: str
@@ -55,15 +74,10 @@ class CustomerData(BaseModel):
 
 
 # --------------------------------------------------
-# Feature definitions
+# Preprocessing
 # --------------------------------------------------
 
-numerical_features = [
-    "SeniorCitizen",
-    "tenure",
-    "MonthlyCharges",
-    "TotalCharges",
-]
+print("Initializing API preprocessing...")
 
 categorical_features = [
     "gender",
@@ -83,80 +97,76 @@ categorical_features = [
     "PaymentMethod",
 ]
 
-
-# --------------------------------------------------
-# Create preprocessing object
-# --------------------------------------------------
+numeric_features = [
+    "SeniorCitizen",
+    "tenure",
+    "MonthlyCharges",
+    "TotalCharges",
+]
 
 preprocessor = ColumnTransformer(
     transformers=[
         (
-            "num",
-            StandardScaler(),
-            numerical_features,
-        ),
-        (
-            "cat",
+            "categorical",
             OneHotEncoder(
                 handle_unknown="ignore",
                 sparse_output=False,
             ),
             categorical_features,
         ),
+        (
+            "numeric",
+            StandardScaler(),
+            numeric_features,
+        ),
     ]
 )
 
 
 # --------------------------------------------------
-# Fit preprocessing using original dataset
+# Fit preprocessing using training dataset
 # --------------------------------------------------
 
-DATA_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "data",
-    "ML DATASET_Telco-Customer-Churn.csv",
+DATASET_PATH = (
+    "data/ML DATASET_Telco-Customer-Churn.csv"
 )
 
-print("Initializing API preprocessing...")
+if not os.path.exists(DATASET_PATH):
+    DATASET_PATH = (
+        "/app/data/"
+        "ML DATASET_Telco-Customer-Churn.csv"
+    )
 
 try:
+    dataset = pd.read_csv(DATASET_PATH)
 
-    original_data = pd.read_csv(DATA_PATH)
-
-    # Convert TotalCharges to numeric
-    original_data["TotalCharges"] = pd.to_numeric(
-        original_data["TotalCharges"],
+    dataset["TotalCharges"] = pd.to_numeric(
+        dataset["TotalCharges"],
         errors="coerce",
     )
 
-    # Same treatment used during preprocessing
-    original_data["TotalCharges"] = (
-        original_data["TotalCharges"].fillna(0)
+    dataset["TotalCharges"] = dataset[
+        "TotalCharges"
+    ].fillna(0)
+
+    X = dataset.drop(
+        columns=["customerID", "Churn"],
+        errors="ignore",
     )
 
-    # Remove target and customer ID
-    X_original = original_data.drop(
-        columns=["Churn", "customerID"]
-    )
+    preprocessor.fit(X)
 
-    # Fit ONLY using the original training-style features
-    preprocessor.fit(X_original)
-
-    feature_names = (
+    feature_count = len(
         preprocessor.get_feature_names_out()
     )
 
     print("API preprocessing initialized.")
     print(
-        "Number of processed features:",
-        len(feature_names),
+        f"Number of processed features: {feature_count}"
     )
 
 except Exception as e:
-
-    print(
-        "ERROR: Could not initialize preprocessing."
-    )
+    print("ERROR: Could not initialize preprocessing.")
     print("Error:", e)
 
     raise RuntimeError(
@@ -170,29 +180,26 @@ except Exception as e:
 
 if os.path.exists("/app/model"):
     MODEL_PATH = "/app/model"
-elif os.path.exists("model"):
-    MODEL_PATH = "model"
 else:
-    raise RuntimeError(
-        "Production model not found. Expected /app/model or model."
+    MODEL_PATH = (
+        "mlruns/1/models/"
+        "m-70925c8db41c42dd967c6478ffa725fb/"
+        "artifacts"
     )
 
 print("Loading production model...")
 
 try:
-
-    # Load using sklearn flavor.
-    # This gives access to predict_proba().
     model = mlflow.sklearn.load_model(
         MODEL_PATH
     )
 
     print(
-        "Production Gradient Boosting model loaded successfully."
+        "Production Gradient Boosting model "
+        "loaded successfully."
     )
 
 except Exception as e:
-
     print(
         "ERROR: Could not load production model."
     )
@@ -204,32 +211,30 @@ except Exception as e:
 
 
 # --------------------------------------------------
-# Root endpoint
-# --------------------------------------------------
-
-@app.get("/")
-def root():
-
-    return {
-        "message": "Customer Churn Prediction API",
-        "status": "running",
-        "docs": "/docs",
-    }
-
-
-# --------------------------------------------------
 # Health endpoint
 # --------------------------------------------------
 
 @app.get("/health")
 def health():
-
     return {
         "status": "healthy",
         "model": "CustomerChurnGradientBoosting",
-        "features": len(
-            preprocessor.get_feature_names_out()
-        ),
+        "features": feature_count,
+    }
+
+
+# --------------------------------------------------
+# Root endpoint
+# --------------------------------------------------
+
+@app.get("/")
+def root():
+    return {
+        "message": "Customer Churn Prediction API",
+        "status": "running",
+        "docs": "/docs",
+        "health": "/health",
+        "metrics": "/metrics",
     }
 
 
@@ -240,73 +245,58 @@ def health():
 @app.post("/predict")
 def predict(customer: CustomerData):
 
-    # ----------------------------------------------
-    # Convert request to DataFrame
-    # ----------------------------------------------
+    start_time = time.perf_counter()
 
-    input_data = pd.DataFrame(
-        [customer.model_dump()]
-    )
+    prediction_requests.inc()
 
-    # ----------------------------------------------
-    # Apply EXACT same preprocessing
-    # ----------------------------------------------
+    try:
+        input_data = pd.DataFrame(
+            [customer.model_dump()]
+        )
 
-    processed_data = preprocessor.transform(
-        input_data
-    )
+        # Transform input using the same preprocessing
+        # used during model training.
+        processed_data = preprocessor.transform(
+            input_data
+        )
 
-    feature_names = (
-        preprocessor.get_feature_names_out()
-    )
+        # Make prediction.
+        prediction_value = int(
+            model.predict(processed_data)[0]
+        )
 
-    processed_df = pd.DataFrame(
-        processed_data,
-        columns=feature_names,
-    )
+        # Get probability.
+        probabilities = model.predict_proba(
+            processed_data
+        )[0]
 
-    # ----------------------------------------------
-    # Prediction
-    # ----------------------------------------------
+        churn_probability = float(
+            probabilities[1]
+        )
 
-    prediction = model.predict(
-        processed_df
-    )
+        if prediction_value == 1:
+            churn_result = "Yes"
+        else:
+            churn_result = "No"
 
-    prediction_value = int(
-        prediction[0]
-    )
+        return {
+            "prediction": prediction_value,
+            "churn": churn_result,
+            "churn_probability": round(
+                churn_probability,
+                4,
+            ),
+        }
 
-    # ----------------------------------------------
-    # Churn label
-    # ----------------------------------------------
+    except Exception:
+        prediction_errors.inc()
+        raise
 
-    if prediction_value == 1:
-        churn = "Yes"
-    else:
-        churn = "No"
+    finally:
+        elapsed_time = (
+            time.perf_counter() - start_time
+        )
 
-    # ----------------------------------------------
-    # Churn probability
-    # ----------------------------------------------
-
-    probabilities = model.predict_proba(
-        processed_df
-    )
-
-    churn_probability = float(
-        probabilities[0][1]
-    )
-
-    # ----------------------------------------------
-    # Return response
-    # ----------------------------------------------
-
-    return {
-        "prediction": prediction_value,
-        "churn": churn,
-        "churn_probability": round(
-            churn_probability,
-            4,
-        ),
-    }
+        prediction_latency.observe(
+            elapsed_time
+        )
