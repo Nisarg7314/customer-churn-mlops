@@ -29,7 +29,11 @@ jobs:
 
       - name: Lint
         run: |
-          flake8 api.py src inspect_data.py run_pipeline.py
+          flake8 api.py src inspect_data.py run_pipeline.py tests
+
+      - name: Run tests
+        run: |
+          python -m pytest -v
 
       - name: Compile Python files
         run: |
