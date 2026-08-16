@@ -170,11 +170,11 @@ except Exception as e:
 
 if os.path.exists("/app/model"):
     MODEL_PATH = "/app/model"
+elif os.path.exists("model"):
+    MODEL_PATH = "model"
 else:
-    MODEL_PATH = (
-        "mlruns/1/models/"
-        "m-70925c8db41c42dd967c6478ffa725fb/"
-        "artifacts"
+    raise RuntimeError(
+        "Production model not found. Expected /app/model or model."
     )
 
 print("Loading production model...")
