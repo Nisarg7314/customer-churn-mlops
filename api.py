@@ -11,9 +11,9 @@ from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 
-# --------------------------------------------------
+# ============================================================
 # FastAPI application
-# --------------------------------------------------
+# ============================================================
 
 app = FastAPI(
     title="Customer Churn Prediction API",
@@ -25,9 +25,9 @@ app = FastAPI(
 )
 
 
-# --------------------------------------------------
+# ============================================================
 # Prometheus monitoring
-# --------------------------------------------------
+# ============================================================
 
 Instrumentator().instrument(app).expose(app)
 
@@ -47,9 +47,9 @@ prediction_latency = Histogram(
 )
 
 
-# --------------------------------------------------
+# ============================================================
 # Input schema
-# --------------------------------------------------
+# ============================================================
 
 class CustomerData(BaseModel):
     gender: str
@@ -73,11 +73,9 @@ class CustomerData(BaseModel):
     TotalCharges: float
 
 
-# --------------------------------------------------
-# Preprocessing
-# --------------------------------------------------
-
-print("Initializing API preprocessing...")
+# ============================================================
+# Feature definitions
+# ============================================================
 
 categorical_features = [
     "gender",
@@ -104,6 +102,11 @@ numeric_features = [
     "TotalCharges",
 ]
 
+
+# ============================================================
+# Preprocessing
+# ============================================================
+
 preprocessor = ColumnTransformer(
     transformers=[
         (
@@ -123,19 +126,22 @@ preprocessor = ColumnTransformer(
 )
 
 
-# --------------------------------------------------
-# Fit preprocessing using training dataset
-# --------------------------------------------------
+# ============================================================
+# Dataset path
+# ============================================================
 
-DATASET_PATH = (
-    "data/ML DATASET_Telco-Customer-Churn.csv"
+DATASET_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "data",
+    "ML DATASET_Telco-Customer-Churn.csv",
 )
 
-if not os.path.exists(DATASET_PATH):
-    DATASET_PATH = (
-        "/app/data/"
-        "ML DATASET_Telco-Customer-Churn.csv"
-    )
+print("Initializing API preprocessing...")
+
+
+# ============================================================
+# Fit preprocessing using dataset
+# ============================================================
 
 try:
     dataset = pd.read_csv(DATASET_PATH)
@@ -171,21 +177,33 @@ except Exception as e:
 
     raise RuntimeError(
         "API preprocessing initialization failed."
-    )
+    ) from e
 
 
-# --------------------------------------------------
-# Load Gradient Boosting model
-# --------------------------------------------------
+# ============================================================
+# Load MLflow model
+# ============================================================
 
 if os.path.exists("/app/model"):
     MODEL_PATH = "/app/model"
-elif os.path.exists("model"):
-    MODEL_PATH = "model"
+
+elif os.path.exists(
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "model",
+    )
+):
+    MODEL_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "model",
+    )
+
 else:
     raise RuntimeError(
-        "Production model not found. Expected /app/model or model."
+        "Production model not found. "
+        "Expected /app/model or local model directory."
     )
+
 
 print("Loading production model...")
 
@@ -207,12 +225,12 @@ except Exception as e:
 
     raise RuntimeError(
         "Production model loading failed."
-    )
+    ) from e
 
 
-# --------------------------------------------------
+# ============================================================
 # Health endpoint
-# --------------------------------------------------
+# ============================================================
 
 @app.get("/health")
 def health():
@@ -223,9 +241,9 @@ def health():
     }
 
 
-# --------------------------------------------------
+# ============================================================
 # Root endpoint
-# --------------------------------------------------
+# ============================================================
 
 @app.get("/")
 def root():
@@ -238,9 +256,9 @@ def root():
     }
 
 
-# --------------------------------------------------
+# ============================================================
 # Prediction endpoint
-# --------------------------------------------------
+# ============================================================
 
 @app.post("/predict")
 def predict(customer: CustomerData):
@@ -250,22 +268,22 @@ def predict(customer: CustomerData):
     prediction_requests.inc()
 
     try:
+        # Convert request to DataFrame
         input_data = pd.DataFrame(
             [customer.model_dump()]
         )
 
-        # Transform input using the same preprocessing
-        # used during model training.
+        # Apply same preprocessing
         processed_data = preprocessor.transform(
             input_data
         )
 
-        # Make prediction.
+        # Make prediction
         prediction_value = int(
             model.predict(processed_data)[0]
         )
 
-        # Get probability.
+        # Get probability
         probabilities = model.predict_proba(
             processed_data
         )[0]
@@ -274,6 +292,7 @@ def predict(customer: CustomerData):
             probabilities[1]
         )
 
+        # Convert prediction to label
         if prediction_value == 1:
             churn_result = "Yes"
         else:
